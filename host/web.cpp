@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -194,6 +195,7 @@ struct AudioRing {
 
 AudioRing g_audio;
 Slot g_slots[kSlots];
+std::mutex g_slots_mutex;
 std::uint64_t g_disc_size = 0, g_use_clock = 0, g_last_chunk = ~0ull, g_run = 0;
 char *g_disc_url = nullptr;
 char *g_state_url = nullptr;
@@ -206,6 +208,7 @@ Slot *find_slot(std::uint64_t index) {
 
 Slot *want(std::uint64_t index) {
     if (index * kChunk >= g_disc_size) return nullptr;
+    std::lock_guard<std::mutex> lock(g_slots_mutex);
     if (Slot *s = find_slot(index)) return s;
     Slot *victim = nullptr;
     for (Slot &s : g_slots) {
@@ -218,10 +221,12 @@ Slot *want(std::uint64_t index) {
     }
     if (!victim) return nullptr;
     if (!victim->data) victim->data = new std::uint8_t[kChunk];
+    victim->state.store(kEmpty, std::memory_order_release);
     victim->index = index;
     victim->size = static_cast<std::uint32_t>(std::min<std::uint64_t>(kChunk, g_disc_size - index * kChunk));
     victim->used = ++g_use_clock;
     victim->state.store(kWanted, std::memory_order_release);
+    emscripten_futex_wake(&victim->state, INT_MAX);
     ps2::wake_render_thread();
     return victim;
 }
@@ -236,22 +241,52 @@ void read_ahead(std::uint64_t index) {
     for (std::uint64_t k = 1; k <= std::min(g_run * 2, kReadAhead); ++k) want(index + k);
 }
 
-const Slot *chunk(std::uint64_t index) {
+std::size_t copy_chunk(std::uint64_t index, std::size_t within, void *out, std::size_t size) {
     Slot *s = want(index);
     advance(index);
     read_ahead(std::max(index, g_last_chunk));
-    for (int attempt = 0; s && attempt < 4; ++attempt) {
-        for (std::uint32_t state = s->state.load(); state != kReady && state != kFailed; state = s->state.load())
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        if (!s) s = want(index);
+        if (!s) break;
+        bool stale = false;
+        std::uint32_t state = kEmpty;
+        for (;;) {
+            {
+                std::lock_guard<std::mutex> lock(g_slots_mutex);
+                stale = s->index != index;
+                state = s->state.load(std::memory_order_acquire);
+            }
+            if (stale || state == kReady || state == kFailed) break;
             emscripten_futex_wait(&s->state, state, INFINITY);
-        if (s->state.load() == kReady) {
-            s->used = ++g_use_clock;
-            return s;
+        }
+        if (stale) {
+            s = want(index);
+            continue;
+        }
+        if (state == kReady) {
+            {
+                std::lock_guard<std::mutex> lock(g_slots_mutex);
+                if (s->state.load(std::memory_order_acquire) == kReady && s->index == index && within < s->size) {
+                    s->used = ++g_use_clock;
+                    const std::size_t take = std::min<std::size_t>(size, s->size - within);
+                    std::memcpy(out, s->data + within, take);
+                    return take;
+                }
+            }
+            s = want(index);
+            continue;
         }
         usleep(100000);
-        s->state.store(kWanted, std::memory_order_release);
-        ps2::wake_render_thread();
+        {
+            std::lock_guard<std::mutex> lock(g_slots_mutex);
+            if (s->index == index && s->state.load(std::memory_order_acquire) == kFailed) {
+                s->state.store(kWanted, std::memory_order_release);
+                emscripten_futex_wake(&s->state, INT_MAX);
+                ps2::wake_render_thread();
+            }
+        }
     }
-    return nullptr;
+    return 0;
 }
 
 bool disc_ready(std::uint64_t offset, std::size_t size) {
@@ -276,11 +311,9 @@ std::size_t read_disc(std::uint64_t offset, void *out, std::size_t size) {
     auto *to = static_cast<std::uint8_t *>(out);
     while (done < size && offset + done < g_disc_size) {
         const std::uint64_t at = offset + done;
-        const Slot *c = chunk(at / kChunk);
-        if (!c) break;
         const std::size_t within = static_cast<std::size_t>(at % kChunk);
-        const std::size_t take = std::min<std::size_t>(size - done, c->size - within);
-        std::memcpy(to + done, c->data + within, take);
+        const std::size_t take = copy_chunk(at / kChunk, within, to + done, size - done);
+        if (!take) break;
         done += take;
     }
     return done;
