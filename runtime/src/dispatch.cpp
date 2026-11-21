@@ -1,4 +1,5 @@
 #include "ps2/generated.hpp"
+#include "ps2/musttail.hpp"
 #include "ps2/system.hpp"
 
 #include <algorithm>
@@ -279,7 +280,8 @@ const Instance *instance_for(std::uint32_t pc) {
     if (g_instances.size() > kMaxInstances) g_instances.resize(kMaxInstances / 2);
     if (!g_module_count || pc >= kRamSize) return nullptr;
     // A code window rewritten by the game holds fixed base modules, each an
-    // image of one content. One whose unit at the pc is in place serves it.
+    // image of one content. Require every translated code word in its unit to
+    // match before first dispatch; a local match alone can select stale code.
     for (std::uint32_t k = 0; k < g_module_count; ++k) {
         const ModuleInfo &m = g_modules[k];
         if (m.fixed_base && pc - m.fixed_base < m.size && unit_in_place(m, pc)) {
@@ -432,7 +434,7 @@ void dispatch(Cpu &c, std::uint32_t, std::uint32_t depth) {
     const std::uint32_t pc = c.pc;
     if (pc & kUnwind) return;
     if (pc == kHandlerReturn || pc == kIdle) return;
-    if (g_forced.has(pc)) [[clang::musttail]] return interpret(c, 0u, depth);
+    if (g_forced.has(pc)) PS2_MUSTTAIL return interpret(c, 0u, depth);
     const UnitInfo *u = unit_for(pc);
     const std::uint16_t id = u ? u->entries[(pc - u->base) >> 2] : 0;
     if (!id) {
@@ -444,7 +446,7 @@ void dispatch(Cpu &c, std::uint32_t, std::uint32_t depth) {
             if (entry) {
                 if (g_tstats.on && (m->module->flags & kModuleTemplate)) ++g_tstats.entered;
                 c.base = base;
-                [[clang::musttail]] return mu->function(c, entry, depth);
+                PS2_MUSTTAIL return mu->function(c, entry, depth);
             }
             // a template was found by the piece around the pc, proven then
             if (m->module->flags & kModuleTemplate) {
@@ -462,10 +464,10 @@ void dispatch(Cpu &c, std::uint32_t, std::uint32_t depth) {
         if (const Instance *other = instance_with_entry(pc)) {
             const UnitInfo *mu = module_unit(*other->module, pc - other->base);
             c.base = other->base;
-            [[clang::musttail]] return mu->function(c, mu->entries[(pc - other->base - mu->base) >> 2], depth);
+            PS2_MUSTTAIL return mu->function(c, mu->entries[(pc - other->base - mu->base) >> 2], depth);
         }
         record_miss(pc);
-        if (interpreter_on()) [[clang::musttail]] return interpret(c, 0u, depth);
+        if (interpreter_on()) PS2_MUSTTAIL return interpret(c, 0u, depth);
         char reason[64];
         std::snprintf(reason, sizeof reason, "missing code at 0x%08X (ra 0x%08X)", pc, c.r[31].w[0]);
         std::fprintf(stderr, "[ee] no translated code at 0x%08X (ra 0x%08X)\n", pc, c.r[31].w[0]);
@@ -476,7 +478,7 @@ void dispatch(Cpu &c, std::uint32_t, std::uint32_t depth) {
         return;
     }
     // a tail call: window code reaches other units through dispatch
-    [[clang::musttail]] return u->function(c, id, depth);
+    PS2_MUSTTAIL return u->function(c, id, depth);
 }
 
 void call(Cpu &c, std::uint32_t target, std::uint32_t depth) {

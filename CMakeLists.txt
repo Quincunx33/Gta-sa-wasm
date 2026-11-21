@@ -5,10 +5,20 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(PS2_GENERATED "" CACHE PATH "Folder with the C++ generated for a game")
+option(PS2_WEB_SAFARI26 "Build for Safari 26 using Asyncify and JavaScript exceptions" OFF)
 
 if(EMSCRIPTEN)
-    add_compile_options(-msimd128 -mtail-call -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -pthread)
-    add_link_options(-msimd128 -mtail-call -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -pthread)
+	if(PS2_WEB_SAFARI26)
+		add_compile_options(-msimd128 -pthread -DPS2_WEB_SAFARI26)
+		add_link_options(-msimd128 -pthread)
+		add_compile_options(-fexceptions)
+		add_link_options(-fexceptions)
+	else()
+		add_compile_options(-msimd128 -mtail-call -pthread)
+		add_link_options(-msimd128 -mtail-call -pthread)
+		add_compile_options(-fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0)
+		add_link_options(-fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0)
+	endif()
 endif()
 
 if(NOT EMSCRIPTEN)
@@ -130,13 +140,23 @@ if(PS2_GENERATED)
         endif()
         if(PS2_WEB_PATCHES)
             target_link_options(ps2web PRIVATE "SHELL:--preload-file \"${PS2_WEB_PATCHES}@/game/patches.txt\"")
-        endif()
-        target_link_libraries(ps2web PRIVATE ps2game ps2runtime)
-        target_link_options(ps2web PRIVATE --profiling-funcs -sJSPI -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=268435456 -sPTHREAD_POOL_SIZE=2 -sALLOW_TABLE_GROWTH=1 -lidbfs.js -sSTACK_SIZE=16777216 -sENVIRONMENT=web
-            -sEXPORTED_FUNCTIONS=_main,_ps2web_pad,_ps2web_pad_connected,_ps2web_resize,_ps2web_gpu_ms,_ps2web_frames,_ps2web_primitives,_ps2web_audio_ring,_ps2web_audio_queued_ms,_ps2web_idle_ms,_ps2web_vu_interpreted,_ps2web_quick_state,_ps2web_video_options,_ps2web_stream
-            -sEXPORTED_RUNTIME_METHODS=callMain,addRunDependency,removeRunDependency,HEAPU8,ENV
-            --shell-file ${CMAKE_SOURCE_DIR}/web/shell.html --preload-file ${PS2_WEB_ELF}@/game/core.elf)
-        set_target_properties(ps2web PROPERTIES SUFFIX ".html" LINK_DEPENDS ${CMAKE_SOURCE_DIR}/web/shell.html)
+		endif()
+		target_link_libraries(ps2web PRIVATE ps2game ps2runtime)
+		if(PS2_WEB_SAFARI26)
+			set(PS2_WEB_SAFARI26_JS true)
+			set(PS2_WEB_ASYNCIFY_FLAG -sASYNCIFY)
+			set(PS2_WEB_INITIAL_MEMORY 134217728)
+		else()
+			set(PS2_WEB_SAFARI26_JS false)
+			set(PS2_WEB_ASYNCIFY_FLAG -sJSPI)
+			set(PS2_WEB_INITIAL_MEMORY 268435456)
+		endif()
+		configure_file("${CMAKE_SOURCE_DIR}/web/shell.html" "${CMAKE_BINARY_DIR}/ps2web-shell.html" @ONLY)
+		target_link_options(ps2web PRIVATE --profiling-funcs ${PS2_WEB_ASYNCIFY_FLAG} -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=${PS2_WEB_INITIAL_MEMORY} -sPTHREAD_POOL_SIZE=2 -sALLOW_TABLE_GROWTH=1 -lidbfs.js -sSTACK_SIZE=16777216 -sENVIRONMENT=web
+			-sEXPORTED_FUNCTIONS=_main,_ps2web_pad,_ps2web_pad_connected,_ps2web_resize,_ps2web_gpu_ms,_ps2web_frames,_ps2web_primitives,_ps2web_audio_ring,_ps2web_audio_queued_ms,_ps2web_idle_ms,_ps2web_vu_interpreted,_ps2web_quick_state,_ps2web_video_options,_ps2web_stream,_ps2web_ee_code_sample
+			-sEXPORTED_RUNTIME_METHODS=callMain,addRunDependency,removeRunDependency,HEAPU8,ENV
+			--shell-file ${CMAKE_BINARY_DIR}/ps2web-shell.html --preload-file ${PS2_WEB_ELF}@/game/core.elf)
+		set_target_properties(ps2web PROPERTIES SUFFIX ".html" LINK_DEPENDS "${CMAKE_SOURCE_DIR}/web/shell.html;${CMAKE_BINARY_DIR}/ps2web-shell.html")
         return()
     endif()
 

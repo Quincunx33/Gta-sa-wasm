@@ -1,4 +1,5 @@
 #include "ps2/disc.hpp"
+#include "ps2/memory.hpp"
 #include "ps2/state_request.hpp"
 #include "ps2/system.hpp"
 #include "ps2/video.hpp"
@@ -20,6 +21,13 @@
 void register_generated_code();
 void register_generated_vu();
 
+namespace {
+constexpr std::uint32_t kEEDebugSampleBase = 0x00880000u;
+constexpr std::size_t kEEDebugSampleSize = 128u << 10;
+std::uint8_t g_ee_debug_sample[kEEDebugSampleSize] = {};
+std::atomic<bool> g_ee_debug_sample_ready{false};
+}
+
 EM_JS_DEPS(ps2web, "$stringToNewUTF8,$UTF8ToString");
 
 EM_JS(void, ps2web_fetch, (const char *url, double offset, int size, void *out, std::atomic<std::uint32_t> *state), {
@@ -28,13 +36,21 @@ EM_JS(void, ps2web_fetch, (const char *url, double offset, int size, void *out, 
         Atomics.store(HEAP32, state >> 2, value);
         Atomics.notify(HEAP32, state >> 2);
     };
-    fetch(target, {headers: {Range: 'bytes=' + offset + '-' + (offset + size - 1)}})
+    const end = offset + size - 1;
+    fetch(target, {headers: {Range: 'bytes=' + offset + '-' + end}})
         .then((response) => {
-            if (response.status !== 206 && response.status !== 200) throw new Error('status ' + response.status);
+            if (response.status !== 206) {
+                if (response.body) response.body.cancel().catch(() => {});
+                throw new Error('expected HTTP 206 byte-range response; got ' + response.status + ', refusing to load the full ISO');
+            }
+            const range = /^bytes (\\d+)-(\\d+)\\/(\\d+|\\*)$/i.exec(response.headers.get('Content-Range') || '');
+            if (!range || Number(range[1]) !== offset || Number(range[2]) !== end) {
+                if (response.body) response.body.cancel().catch(() => {});
+                throw new Error('server returned an invalid Content-Range for the disc chunk');
+            }
             return response.arrayBuffer().then((buffer) => {
-                let bytes = new Uint8Array(buffer);
-                if (response.status === 200) bytes = bytes.subarray(offset, offset + size);
-                HEAPU8.set(bytes.subarray(0, Math.min(bytes.length, size)), out);
+                if (buffer.byteLength !== size) throw new Error('disc chunk has unexpected size ' + buffer.byteLength + ', expected ' + size);
+                HEAPU8.set(new Uint8Array(buffer), out);
                 finish(3);
             });
         })
@@ -57,13 +73,17 @@ EM_JS(int, ps2web_save_program, (const char *name, const std::uint8_t *code, int
 
 EM_JS(int, ps2web_save_entry, (const char *token), {
     try {
-        const xhr = new XMLHttpRequest();
-        xhr.open('PUT', 'entry/' + encodeURIComponent(UTF8ToString(token)), false);
-        xhr.send();
-        return xhr.status;
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', 'entry/' + encodeURIComponent(UTF8ToString(token)), false);
+      xhr.send();
+      return xhr.status;
     } catch (e) {
-        return 0;
+      return 0;
     }
+});
+
+EM_JS(int, ps2web_record_findings, (), {
+    return Module && Module.recordFindings ? 1 : 0;
 });
 
 EM_JS(double, ps2web_disc_size, (), { return Module.discSize || 0; });
@@ -147,8 +167,13 @@ EM_JS(void, ps2web_blit, (const std::uint32_t *rgba, int width, int height, int 
 namespace {
 
 constexpr std::size_t kChunk = 256u << 10;
+#if defined(PS2_WEB_SAFARI26)
+constexpr std::uint32_t kSlots = 64;
+constexpr std::uint64_t kReadAhead = 8;
+#else
 constexpr std::uint32_t kSlots = 256;
 constexpr std::uint64_t kReadAhead = 16;
+#endif
 constexpr std::uint32_t kAudioFrames = 1u << 14;
 
 enum : std::uint32_t { kEmpty, kWanted, kLoading, kReady, kFailed };
@@ -382,6 +407,13 @@ extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_idle_ms(int which) {
     if (which == 2) return ps2::vu_thread_idle_ms();
     return which ? g_render_idle.load() : g_emulation_idle.load();
 }
+extern "C" EMSCRIPTEN_KEEPALIVE std::uint32_t ps2web_ee_code_sample() {
+    if (!g_ee_debug_sample_ready.load(std::memory_order_acquire)) return 0;
+    // Refresh on demand: an earlier miss may have captured the boot image,
+    // while the game can later replace this executable window with new code.
+    std::memcpy(g_ee_debug_sample, ps2::g_ram + kEEDebugSampleBase, kEEDebugSampleSize);
+    return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(g_ee_debug_sample));
+}
 
 int main(int argc, char **argv) {
     static Launch launch;
@@ -412,6 +444,7 @@ int main(int argc, char **argv) {
     g_state_url = ps2web_state_url();
     ps2::g_options.on_vblank = on_vblank;
     ps2::g_options.on_vu_program = [](const std::string &name, const std::uint8_t *code, std::size_t size) {
+        if (!ps2web_record_findings()) return;
         static bool unsupported = false;
         if (unsupported) return;
         const int status = ps2web_save_program(name.c_str(), code, static_cast<int>(size));
@@ -419,6 +452,16 @@ int main(int argc, char **argv) {
         else unsupported = true;
     };
     ps2::g_options.on_miss = [](const std::string &token) {
+        if (!g_ee_debug_sample_ready.load(std::memory_order_relaxed)) {
+            const auto colon = token.find_last_of(':');
+            const char *address_text = token.c_str() + (colon == std::string::npos ? 0 : colon + 1);
+            const auto address = static_cast<std::uint32_t>(std::strtoul(address_text, nullptr, 16));
+            if (address >= kEEDebugSampleBase && address < kEEDebugSampleBase + kEEDebugSampleSize) {
+                std::memcpy(g_ee_debug_sample, ps2::g_ram + kEEDebugSampleBase, kEEDebugSampleSize);
+                g_ee_debug_sample_ready.store(true, std::memory_order_release);
+            }
+        }
+        if (!ps2web_record_findings()) return;
         static bool unsupported = false;
         if (unsupported) return;
         const int status = ps2web_save_entry(token.c_str());

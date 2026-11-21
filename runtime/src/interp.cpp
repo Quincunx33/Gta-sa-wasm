@@ -1,8 +1,10 @@
 #include "ps2/generated.hpp"
+#include "ps2/musttail.hpp"
 #include "ps2/system.hpp"
 
 #include "r5900.hpp"
 
+#include <array>
 #include <bit>
 #include <cstdio>
 #include <set>
@@ -51,6 +53,15 @@ bool condition(const Cpu &c, const Insn &i) {
     }
 }
 
+inline std::uint32_t fetch_word(std::uint32_t pc) {
+    if (pc <= kRamSize - sizeof(std::uint32_t)) {
+        std::uint32_t word;
+        __builtin_memcpy(&word, g_ram + pc, sizeof word);
+        return word;
+    }
+    return ld32(pc);
+}
+
 // Executes one instruction without control flow. False when execution left
 // the interpreter's hands (a syscall that switched threads, a stop).
 bool simple(Cpu &c, const Insn &i) {
@@ -59,7 +70,6 @@ bool simple(Cpu &c, const Insn &i) {
     Reg128 scratch;
     Reg128 &dest = rd ? c.r[rd] : scratch;
     auto &v = c.vu0;
-    const std::uint32_t bc = c.vu0.vf[i.ft()].w[i.bc()];
     switch (i.op) {
     case Sll: set_w(c, rd, w(c, rt) << sa); break;
     case Srl: set_w(c, rd, w(c, rt) >> sa); break;
@@ -252,13 +262,13 @@ bool simple(Cpu &c, const Insn &i) {
         if (i.fs() < 16) vu::set_vi(v, i.fs(), w(c, rt));
         else ctc2(c, i.fs(), w(c, rt));
         break;
-    case Vaddbc: vu::addbc(v, i.dest(), i.fd(), i.fs(), bc); break;
-    case Vsubbc: vu::subbc(v, i.dest(), i.fd(), i.fs(), bc); break;
-    case Vmaddbc: vu::maddbc(v, i.dest(), i.fd(), i.fs(), bc); break;
-    case Vmsubbc: vu::msubbc(v, i.dest(), i.fd(), i.fs(), bc); break;
-    case Vmaxbc: vu::maxbc(v, i.dest(), i.fd(), i.fs(), bc); break;
-    case Vminibc: vu::minibc(v, i.dest(), i.fd(), i.fs(), bc); break;
-    case Vmulbc: vu::mulbc(v, i.dest(), i.fd(), i.fs(), bc); break;
+    case Vaddbc: vu::addbc(v, i.dest(), i.fd(), i.fs(), c.vu0.vf[i.ft()].w[i.bc()]); break;
+    case Vsubbc: vu::subbc(v, i.dest(), i.fd(), i.fs(), c.vu0.vf[i.ft()].w[i.bc()]); break;
+    case Vmaddbc: vu::maddbc(v, i.dest(), i.fd(), i.fs(), c.vu0.vf[i.ft()].w[i.bc()]); break;
+    case Vmsubbc: vu::msubbc(v, i.dest(), i.fd(), i.fs(), c.vu0.vf[i.ft()].w[i.bc()]); break;
+    case Vmaxbc: vu::maxbc(v, i.dest(), i.fd(), i.fs(), c.vu0.vf[i.ft()].w[i.bc()]); break;
+    case Vminibc: vu::minibc(v, i.dest(), i.fd(), i.fs(), c.vu0.vf[i.ft()].w[i.bc()]); break;
+    case Vmulbc: vu::mulbc(v, i.dest(), i.fd(), i.fs(), c.vu0.vf[i.ft()].w[i.bc()]); break;
     case Vmulq: vu::mulbc(v, i.dest(), i.fd(), i.fs(), v.q); break;
     case Vmaxi: vu::maxbc(v, i.dest(), i.fd(), i.fs(), v.i); break;
     case Vmuli: vu::mulbc(v, i.dest(), i.fd(), i.fs(), v.i); break;
@@ -286,11 +296,11 @@ bool simple(Cpu &c, const Insn &i) {
     case Vior: vu::set_vi(v, i.fd(), v.vi[i.fs()] | v.vi[i.ft()]); break;
     case Vcallms: vcallms(c, i.imm15() * 8u); break;
     case Vcallmsr: vcallms(c, v.cmsar0 * 8u); break;
-    case Vaddabc: vu::addabc(v, i.dest(), i.fs(), bc); break;
-    case Vsubabc: vu::subabc(v, i.dest(), i.fs(), bc); break;
-    case Vmaddabc: vu::maddabc(v, i.dest(), i.fs(), bc); break;
-    case Vmsubabc: vu::msubabc(v, i.dest(), i.fs(), bc); break;
-    case Vmulabc: vu::mulabc(v, i.dest(), i.fs(), bc); break;
+    case Vaddabc: vu::addabc(v, i.dest(), i.fs(), c.vu0.vf[i.ft()].w[i.bc()]); break;
+    case Vsubabc: vu::subabc(v, i.dest(), i.fs(), c.vu0.vf[i.ft()].w[i.bc()]); break;
+    case Vmaddabc: vu::maddabc(v, i.dest(), i.fs(), c.vu0.vf[i.ft()].w[i.bc()]); break;
+    case Vmsubabc: vu::msubabc(v, i.dest(), i.fs(), c.vu0.vf[i.ft()].w[i.bc()]); break;
+    case Vmulabc: vu::mulabc(v, i.dest(), i.fs(), c.vu0.vf[i.ft()].w[i.bc()]); break;
     case Vmulaq: vu::mulabc(v, i.dest(), i.fs(), v.q); break;
     case Vmulai: vu::mulabc(v, i.dest(), i.fs(), v.i); break;
     case Vaddaq: vu::addabc(v, i.dest(), i.fs(), v.q); break;
@@ -357,6 +367,29 @@ bool simple(Cpu &c, const Insn &i) {
     return true;
 }
 
+struct DecodedInstruction {
+    std::uint32_t pc = ~0u;
+    std::uint32_t word = 0;
+    Insn insn{};
+    Flow flow = Flow::None;
+};
+
+constexpr std::size_t kDecodeCacheSize = 4096;
+static_assert((kDecodeCacheSize & (kDecodeCacheSize - 1)) == 0);
+thread_local std::array<DecodedInstruction, kDecodeCacheSize> g_decode_cache{};
+
+const DecodedInstruction &decode_cached(std::uint32_t pc) {
+    const std::uint32_t word = fetch_word(pc);
+    DecodedInstruction &slot = g_decode_cache[(pc >> 2) & (kDecodeCacheSize - 1)];
+    if (slot.pc != pc || slot.word != word) {
+        slot.pc = pc;
+        slot.word = word;
+        slot.insn = recomp::decode(word, pc);
+        slot.flow = recomp::flow(slot.insn.op);
+    }
+    return slot;
+}
+
 std::set<std::uint32_t> g_reported;
 
 }
@@ -369,11 +402,12 @@ void interpret(Cpu &c, std::uint32_t, std::uint32_t depth) {
         // back to translated code at the first branch target that has some
         if (check && translated(pc)) {
             c.pc = pc;
-            [[clang::musttail]] return dispatch(c, 0u, depth);
+            PS2_MUSTTAIL return dispatch(c, 0u, depth);
         }
         for (;;) {
-            const Insn i = recomp::decode(ld32(pc), pc);
-            const Flow fl = recomp::flow(i.op);
+            const DecodedInstruction &decoded = decode_cached(pc);
+            const Insn &i = decoded.insn;
+            const Flow fl = decoded.flow;
             if (fl == Flow::None) {
                 if (i.op == Syscall) {
                     c.budget -= pending;
@@ -388,13 +422,13 @@ void interpret(Cpu &c, std::uint32_t, std::uint32_t depth) {
             pending = 0;
             if (i.op == Eret) {
                 c.pc = eret(c);
-                [[clang::musttail]] return dispatch(c, 0u, depth);
+                PS2_MUSTTAIL return dispatch(c, 0u, depth);
             }
             if (fl == Flow::Stop) {
                 stop(c, pc, recomp::name(i.op));
                 return;
             }
-            const Insn ds = recomp::decode(ld32(pc + 4u), pc + 4u);
+            const Insn ds = decode_cached(pc + 4u).insn;
             if (ds.op == Invalid || recomp::has_delay_slot(ds.op) || ds.op == Syscall) {
                 stop(c, pc + 4u, "unsupported delay slot");
                 return;
@@ -456,7 +490,7 @@ void interpret(Cpu &c, std::uint32_t, std::uint32_t depth) {
                 if (!slot()) return;
                 c.pc = target;
                 if (i.rs() == 31) return;
-                [[clang::musttail]] return dispatch(c, 0u, depth);
+                PS2_MUSTTAIL return dispatch(c, 0u, depth);
             }
             case J:
                 if (!slot()) return;

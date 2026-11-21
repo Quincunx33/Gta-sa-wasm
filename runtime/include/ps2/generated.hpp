@@ -4,6 +4,7 @@
 #include "fpu.hpp"
 #include "memory.hpp"
 #include "mmi.hpp"
+#include "musttail.hpp"
 #include "vu.hpp"
 
 #include <cstdint>

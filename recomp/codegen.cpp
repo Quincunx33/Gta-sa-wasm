@@ -228,7 +228,7 @@ private:
                 falls = true;
             } else if (i.op == Eret) {
                 flush();
-                line("{ const std::uint32_t t = eret(c); c.pc = t; [[clang::musttail]] return dispatch(c, 0u, depth); }");
+                line("{ const std::uint32_t t = eret(c); c.pc = t; PS2_MUSTTAIL return dispatch(c, 0u, depth); }");
                 falls = false;
             } else if (fl == Flow::Stop) {
                 flush();
@@ -265,9 +265,9 @@ private:
     void exit_to(std::uint32_t a) {
         flush();
         if (p_.is_code(a) && !window_) {
-            line(std::format("{}[[clang::musttail]] return {}(c, {}u, depth);", rebase(), unit_name(layout_.unit_of(a)), id_of(a)));
+            line(std::format("{}PS2_MUSTTAIL return {}(c, {}u, depth);", rebase(), unit_name(layout_.unit_of(a)), id_of(a)));
         } else {
-            line(std::format("c.pc = {}; [[clang::musttail]] return dispatch(c, 0u, depth);", pc(a)));
+            line(std::format("c.pc = {}; PS2_MUSTTAIL return dispatch(c, 0u, depth);", pc(a)));
         }
     }
 
@@ -275,9 +275,9 @@ private:
         std::string check = t <= from ? std::format("if (c.budget < 0 && preempt(c)) {{ c.pc = {} | kUnwind; return; }} ", where) : "";
         if (in_unit(t) && p_.is_code(t)) return check + "goto " + label(t) + ";";
         if (p_.is_code(t) && !window_)
-            return check + std::format("{}[[clang::musttail]] return {}(c, {}u, depth);", rebase(), unit_name(layout_.unit_of(t)), id_of(t));
-        if (p_.is_code(t)) return check + std::format("c.pc = {}; [[clang::musttail]] return dispatch(c, 0u, depth);", where);
-        return std::format("c.pc = {}; [[clang::musttail]] return dispatch(c, 0u, depth);", where);
+            return check + std::format("{}PS2_MUSTTAIL return {}(c, {}u, depth);", rebase(), unit_name(layout_.unit_of(t)), id_of(t));
+        if (p_.is_code(t)) return check + std::format("c.pc = {}; PS2_MUSTTAIL return dispatch(c, 0u, depth);", where);
+        return std::format("c.pc = {}; PS2_MUSTTAIL return dispatch(c, 0u, depth);", where);
     }
 
     std::string call_to(std::uint32_t t, std::uint32_t ret, const std::string &where) {
@@ -332,13 +332,13 @@ private:
         // window code checks its call is still the one in memory and otherwise
         // goes on in whatever image is there now
         if (window_ && !dynamic_jump(a) && (i.op == Jal || i.op == Bltzal || i.op == Bgezal || i.op == Bltzall || i.op == Bgezall))
-            line(std::format("if (ld32({}) != {}) [[unlikely]] {{ c.pc = {}; [[clang::musttail]] return dispatch(c, 0u, depth); }}", pc(a), hex(i.word), pc(a)));
+                line(std::format("if (ld32({}) != {}) [[unlikely]] {{ c.pc = {}; PS2_MUSTTAIL return dispatch(c, 0u, depth); }}", pc(a), hex(i.word), pc(a)));
         if (dynamic_jump(a)) {
             const std::string target = std::format("const std::uint32_t t = (({} + 4u) & 0xF0000000u) | ((ld32({}) & 0x03FFFFFFu) << 2);", pc(a), pc(a));
             if (i.op == Jal)
                 line(std::format("{{ {} {} {} call(c, t, depth + 1u); if (c.pc != {}) [[unlikely]] return; }}", target, link, slot, pc(ret)));
             else
-                line(std::format("{{ {} {} c.pc = t; [[clang::musttail]] return dispatch(c, 0u, depth); }}", target, slot));
+                line(std::format("{{ {} {} c.pc = t; PS2_MUSTTAIL return dispatch(c, 0u, depth); }}", target, slot));
             return;
         }
         const std::string where = target(i, t);
@@ -369,7 +369,7 @@ private:
             if (i.rs() == 31) {
                 line(std::format("{{ const std::uint32_t t = {}; {} c.pc = t; return; }}", w(31), slot));
             } else {
-                line(std::format("{{ const std::uint32_t t = {}; {} c.pc = t; if (t - {} < {}u) {{ entry = {}[(t - {}) >> 2]; if (entry) goto dispatch_entry; }} [[clang::musttail]] return dispatch(c, 0u, depth); }}",
+                line(std::format("{{ const std::uint32_t t = {}; {} c.pc = t; if (t - {} < {}u) {{ entry = {}[(t - {}) >> 2]; if (entry) goto dispatch_entry; }} PS2_MUSTTAIL return dispatch(c, 0u, depth); }}",
                                  w(i.rs()), slot, pc(base_), layout_.size(), table_name(layout_.unit_of(base_)), pc(base_)));
             }
             break;

@@ -5,7 +5,13 @@ set -e
 here=$(cd "$(dirname "$0")/.." && pwd)
 game=${1:-gt4}
 emsdk=${2:-${EMSDK:-$here/tools/emsdk}}
-out="$here/build/web-$game"
+safari26=${PS2_WEB_SAFARI26:-OFF}
+suffix=""
+case "$safari26" in
+    1|ON|on|true|TRUE) safari26=ON; suffix=-safari ;;
+    *) safari26=OFF ;;
+esac
+out="$here/build/web-$game$suffix"
 boot=$(sed -n 's/^BOOT2 *= *//p' "$here/games/$game/disc/SYSTEM.CNF" | tr -d '\r')
 elf=$(ls "$here/games/$game/patched/"* 2>/dev/null | head -1)
 [ -n "$elf" ] || elf="$here/games/$game/core.elf"
@@ -18,7 +24,8 @@ printf '%s\n' "$boot" > "$out/boot.txt"
 source "$emsdk/emsdk_env.sh" > /dev/null 2>&1
 emcmake cmake -S "$here" -B "$out" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DPS2_GENERATED="$here/generated/$game" -DPS2_WEB_ELF="$elf" -DPS2_WEB_BOOT_FILE="$out/boot.txt" \
-    -DPS2_WEB_PATCHES="$([ -f "$here/games/$game/patches.txt" ] && echo "$here/games/$game/patches.txt")"
+    -DPS2_WEB_PATCHES="$([ -f "$here/games/$game/patches.txt" ] && echo "$here/games/$game/patches.txt")" \
+    -DPS2_WEB_SAFARI26="$safari26"
 ninja -C "$out" ps2web
 gzip -kf9 "$out/ps2web.wasm" "$out/ps2web.data" "$out/ps2web.js"
 printf 'built %s/ps2web.html; serve it with scripts/serve.py %q %q\n' "$out" "build/web-$game" "games/$game/disc.iso"

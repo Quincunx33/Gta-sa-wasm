@@ -18,9 +18,14 @@
   #bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 6px 12px; background: #141418; border-top: 1px solid #222; }
   #status { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #stats { font-variant-numeric: tabular-nums; color: #9ad; }
+  #debug-panel { position: fixed; z-index: 5; inset: calc(8px + env(safe-area-inset-top)) 8px calc(52px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; padding: 12px; background: rgba(15, 17, 23, .97); border: 1px solid #57647d; border-radius: 8px; box-shadow: 0 8px 32px #000b; }
+  #debug-panel[hidden] { display: none; }
+  #debug-head { display: flex; align-items: center; gap: 8px; }
+  #debug-head strong { flex: 1; }
+  #debug-output { flex: 1; min-height: 0; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #d8e4fa; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
   select { background: #2a3a55; color: #fff; border: 0; padding: 5px 8px; border-radius: 4px; }
   button { background: #2a3a55; color: #fff; border: 0; padding: 6px 14px; border-radius: 4px; cursor: pointer; }
-  #aa-label, #stats-label { display: flex; align-items: center; gap: 6px; color: #9ad; white-space: nowrap; }
+  #aa-label, #stats-label, #capture-findings-label { display: flex; align-items: center; gap: 6px; color: #9ad; white-space: nowrap; }
   #menu { position: fixed; right: 8px; z-index: 4; display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px;
     background: #141418; border: 1px solid #2a2a33; border-radius: 8px; max-height: 70vh; overflow-y: auto; }
   #menu[hidden] { display: none; }
@@ -125,8 +130,14 @@
 <div id="bar"><span id="status">Loading…</span><span id="stats"></span>
   <button id="report" type="button" hidden title="Copy what the game printed when it stopped, to paste into an issue">Copy report</button>
   <button id="invite" class="host-only" type="button" disabled title="Make a room and copy a link that lets a friend watch and play as player 2">Invite</button>
+  <button id="debug-toggle" type="button" aria-expanded="false" aria-controls="debug-panel">Debug</button>
   <button id="menu-toggle" type="button" aria-expanded="false" aria-controls="menu">Menu ▴</button>
   <button id="fullscreen" type="button" title="Fullscreen (F or double click)">Fullscreen</button></div>
+<section id="debug-panel" hidden aria-label="Runtime diagnostics">
+  <div id="debug-head"><strong>Runtime diagnostics</strong><button id="debug-copy" type="button">Copy</button><button id="debug-ee-download" type="button" title="Download 128 KiB from EE RAM to this device; it is not uploaded">EE sample</button><button id="debug-close" type="button">Close</button></div>
+  <label id="capture-findings-label" title="Uploads newly discovered EE entries and VU1 programs to the preview server; synchronous uploads can briefly pause gameplay"><input id="capture-findings" type="checkbox"> Upload porting discoveries</label>
+  <pre id="debug-output">Open Debug to collect diagnostics.</pre>
+</section>
 <div id="menu" hidden>
   <select id="scale" class="host-only" aria-label="Resolution" title="Internal resolution, the page reloads to apply it">
     <option value="1">640×512</option>
@@ -157,6 +168,7 @@
 <template id="engine">{{{ SCRIPT }}}</template>
 <script>
 const statusEl = document.getElementById('status');
+const PS2_SAFARI26_BUILD = @PS2_WEB_SAFARI26_JS@;
 const CARD_DIR = '/memcard', CARD_FILE = '/memcard/Mcd001.ps2', CARD_BYTES = 8650752;
 let noteTimer = 0, noteRestore = '';
 function note(text) {
@@ -282,13 +294,87 @@ function missingFeatures() {
   };
   const missing = [];
   if (!window.crossOriginIsolated) missing.push('cross-origin isolation (COOP and COEP headers)');
-  if (typeof WebAssembly.Suspending !== 'function') missing.push('WebAssembly JSPI');
-  if (!accepts([0, 0x1F, 0x40, 0, 0x0B, 0x0B])) missing.push('WebAssembly exception handling (try_table)');
-  if (!accepts([0, 0x12, 0, 0x0B])) missing.push('WebAssembly tail calls');
+  if (!PS2_SAFARI26_BUILD && typeof WebAssembly.Suspending !== 'function') missing.push('WebAssembly JSPI');
+  if (!PS2_SAFARI26_BUILD && !accepts([0, 0x1F, 0x40, 0, 0x0B, 0x0B])) missing.push('WebAssembly exception handling (try_table)');
+  if (!PS2_SAFARI26_BUILD && !accepts([0, 0x12, 0, 0x0B])) missing.push('WebAssembly tail calls');
   if (!accepts([0, 0xFD, 0x0C].concat(new Array(16).fill(0), [0x1A, 0x0B]))) missing.push('WebAssembly SIMD');
   return missing;
 }
 const missing = guestRoom ? [] : missingFeatures();
+const debugPanel = document.getElementById('debug-panel');
+const debugOutput = document.getElementById('debug-output');
+const debugToggle = document.getElementById('debug-toggle');
+function debugText() {
+  const moduleReady = typeof Module !== 'undefined' && Module;
+  const gameFrame = moduleReady && Module._ps2web_frames ? Module._ps2web_frames() : 'not started';
+  const heap = moduleReady && Module.HEAPU8 ? Math.round(Module.HEAPU8.length / 1048576) + ' MB' : 'not initialized';
+  const logs = logTail.slice(-12);
+  return [
+    'Build: ' + (PS2_SAFARI26_BUILD ? 'Safari 26 compatibility (Asyncify + JS exceptions)' : 'standard JSPI build'),
+    'Status: ' + statusEl.textContent,
+    'Halt reason: ' + (haltReason || 'none'),
+    'URL: ' + location.href,
+    'Browser: ' + navigator.userAgent,
+    'Cross-origin isolated: ' + !!window.crossOriginIsolated,
+    'SharedArrayBuffer: ' + (typeof SharedArrayBuffer === 'function'),
+    'SIMD: ' + (!missing.includes('WebAssembly SIMD')),
+    'JSPI available: ' + (typeof WebAssembly.Suspending === 'function') + (PS2_SAFARI26_BUILD ? ' (not required by this build)' : ''),
+    'Missing feature checks: ' + (missing.length ? missing.join(', ') : 'none'),
+    'WebGPU API: ' + (navigator.gpu ? 'available' : 'unavailable'),
+    'GPU: ' + (moduleReady ? Module.gpuInfo || 'checking / unknown' : 'checking'),
+    'Canvas: ' + canvas.width + ' × ' + canvas.height + ' (CSS ' + Math.round(canvas.clientWidth) + ' × ' + Math.round(canvas.clientHeight) + ')',
+    'Game frame: ' + gameFrame,
+    'Frame stats: ' + (statsEl.textContent || 'not sampled yet'),
+    'Wasm heap: ' + heap,
+    'EE sample: ' + (moduleReady && Module._ps2web_ee_code_sample && Module._ps2web_ee_code_sample() ? 'captured locally (0x00880000–0x008A0000)' : 'waiting for untranslated code in 0x00880000–0x008A0000'),
+    'Game disc: ' + (moduleReady ? (Module.discSize ? (Module.discSize / 1073741824).toFixed(2) + ' GB' : Module.discUrl || 'unknown') : 'not initialized'),
+    'Recent runtime log:',
+    logs.length ? logs.join('\n') : '(empty)'
+  ].join('\n');
+}
+function refreshDebug() { debugOutput.textContent = debugText(); }
+debugToggle.addEventListener('click', () => {
+  debugPanel.hidden = !debugPanel.hidden;
+  debugToggle.setAttribute('aria-expanded', debugPanel.hidden ? 'false' : 'true');
+  if (!debugPanel.hidden) refreshDebug();
+});
+document.getElementById('debug-close').addEventListener('click', () => {
+  debugPanel.hidden = true;
+  debugToggle.setAttribute('aria-expanded', 'false');
+});
+document.getElementById('debug-copy').addEventListener('click', async () => {
+  const text = debugText();
+  try {
+    await navigator.clipboard.writeText(text);
+    note('Debug information copied');
+  } catch (e) {
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    link.download = 'ps2-web-recomp-debug.txt';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+  }
+});
+document.getElementById('debug-ee-download').addEventListener('click', () => {
+  const ptr = typeof Module !== 'undefined' && Module._ps2web_ee_code_sample ? Module._ps2web_ee_code_sample() : 0;
+  if (!ptr || !Module.HEAPU8) {
+    note('No EE sample yet; start the game and wait for an untranslated 0x0088… entry.');
+    return;
+  }
+  const bytes = Module.HEAPU8.slice(ptr, ptr + (128 << 10));
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+  link.download = 'gtasa-ee-00880000-008A0000.bin';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+  note('EE sample downloaded locally; it was not uploaded.');
+});
+const captureFindings = document.getElementById('capture-findings');
+captureFindings.addEventListener('change', () => {
+  Module.recordFindings = captureFindings.checked;
+  note(captureFindings.checked ? 'Porting discoveries will be uploaded; gameplay may briefly pause' : 'Porting discovery uploads disabled');
+});
+setInterval(() => { if (!debugPanel.hidden) refreshDebug(); }, 1000);
 
 const touchRoot = document.getElementById('touch'), knob = document.getElementById('knob');
 let touchPad = { buttons: 0, x: 0, y: 0, stick: false };
@@ -1084,6 +1170,7 @@ const countShown = () => {
 requestAnimationFrame(countShown);
 var Module = {
   canvas,
+  recordFindings: false,
   arguments: ['/game/core.elf'].concat(params.has('arg') ? ['--arg', params.get('arg')] : [], aspect === '16:9' ? ['--widescreen'] : [], params.getAll('press').flatMap((p) => p.split(',').flatMap((x) => ['--press', x]))),
   discUrl: params.get('disc') || 'disc.iso',
   stateUrl: params.get('state'),
@@ -1170,8 +1257,8 @@ var Module = {
       const emuIdle = Module._ps2web_idle_ms(0), renderIdle = Module._ps2web_idle_ms(1), vuIdle = Module._ps2web_idle_ms(2), span = now - last;
       const interpreted = Module._ps2web_vu_interpreted();
       statsEl.textContent = 'frame ' + Module._ps2web_frames() + '   ' + (frames * 1000 / span).toFixed(1) + ' fps (' + (shown * 1000 / span).toFixed(0) + ' on screen)   GPU ' + ((gpu - lastGpu) / span * 100).toFixed(0) +
-                            '%   idle emu ' + ((emuIdle - lastEmuIdle) / span * 100).toFixed(0) + '% vu ' + ((vuIdle - lastVuIdle) / span * 100).toFixed(0) +
-                            '% gs ' + ((renderIdle - lastRenderIdle) / span * 100).toFixed(0) +
+                            '%   idle emu ' + ((emuIdle - lastEmuIdle) / span * 100).toFixed(0) + '% idle vu ' + ((vuIdle - lastVuIdle) / span * 100).toFixed(0) +
+                            '% idle gs ' + ((renderIdle - lastRenderIdle) / span * 100).toFixed(0) +
                             '%   heap ' + memory + ' MB   audio ' + Module.audioQueuedMs().toFixed(0) + ' ms' +
                             (interpreted > lastInterpreted ? '   vu1 interpreted ' + Math.round((interpreted - lastInterpreted) * 1000 / span) + '/s' : '');
       if (statsLog) console.log('[stats] ' + statsEl.textContent.replace(/\s+/g, ' '));
