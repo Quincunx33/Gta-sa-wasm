@@ -422,7 +422,8 @@ void interpret(Cpu &c, std::uint32_t, std::uint32_t depth) {
             pending = 0;
             if (i.op == Eret) {
                 c.pc = eret(c);
-                PS2_MUSTTAIL return dispatch(c, 0u, depth);
+                pc = c.pc;
+                break;
             }
             if (fl == Flow::Stop) {
                 stop(c, pc, recomp::name(i.op));
@@ -490,7 +491,8 @@ void interpret(Cpu &c, std::uint32_t, std::uint32_t depth) {
                 if (!slot()) return;
                 c.pc = target;
                 if (i.rs() == 31) return;
-                PS2_MUSTTAIL return dispatch(c, 0u, depth);
+                pc = target;
+                break;
             }
             case J:
                 if (!slot()) return;

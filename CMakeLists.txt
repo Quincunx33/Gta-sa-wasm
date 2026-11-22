@@ -145,14 +145,16 @@ if(PS2_GENERATED)
 		if(PS2_WEB_SAFARI26)
 			set(PS2_WEB_SAFARI26_JS true)
 			set(PS2_WEB_ASYNCIFY_FLAG -sASYNCIFY)
+			set(PS2_WEB_ASYNCIFY_STACK_FLAG -sASYNCIFY_STACK_SIZE=65536)
 			set(PS2_WEB_INITIAL_MEMORY 134217728)
 		else()
 			set(PS2_WEB_SAFARI26_JS false)
 			set(PS2_WEB_ASYNCIFY_FLAG -sJSPI)
+			set(PS2_WEB_ASYNCIFY_STACK_FLAG)
 			set(PS2_WEB_INITIAL_MEMORY 268435456)
 		endif()
 		configure_file("${CMAKE_SOURCE_DIR}/web/shell.html" "${CMAKE_BINARY_DIR}/ps2web-shell.html" @ONLY)
-		target_link_options(ps2web PRIVATE --profiling-funcs ${PS2_WEB_ASYNCIFY_FLAG} -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=${PS2_WEB_INITIAL_MEMORY} -sPTHREAD_POOL_SIZE=2 -sALLOW_TABLE_GROWTH=1 -lidbfs.js -sSTACK_SIZE=16777216 -sENVIRONMENT=web
+		target_link_options(ps2web PRIVATE --profiling-funcs ${PS2_WEB_ASYNCIFY_FLAG} ${PS2_WEB_ASYNCIFY_STACK_FLAG} -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=${PS2_WEB_INITIAL_MEMORY} -sPTHREAD_POOL_SIZE=2 -sALLOW_TABLE_GROWTH=1 -lidbfs.js -sSTACK_SIZE=16777216 -sENVIRONMENT=web
 			-sEXPORTED_FUNCTIONS=_main,_ps2web_pad,_ps2web_pad_connected,_ps2web_resize,_ps2web_gpu_ms,_ps2web_frames,_ps2web_primitives,_ps2web_audio_ring,_ps2web_audio_queued_ms,_ps2web_idle_ms,_ps2web_vu_interpreted,_ps2web_quick_state,_ps2web_video_options,_ps2web_stream,_ps2web_ee_code_sample
 			-sEXPORTED_RUNTIME_METHODS=callMain,addRunDependency,removeRunDependency,HEAPU8,ENV
 			--shell-file ${CMAKE_BINARY_DIR}/ps2web-shell.html --preload-file ${PS2_WEB_ELF}@/game/core.elf)
