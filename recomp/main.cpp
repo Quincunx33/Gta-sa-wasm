@@ -1,0 +1,451 @@
+#include "analysis.hpp"
+#include "codegen.hpp"
+#include "elf.hpp"
+#include "snr2.hpp"
+
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <map>
+#include <set>
+#include <string>
+#include <vector>
+
+using namespace recomp;
+
+namespace {
+
+struct Entries {
+    std::vector<std::uint32_t> main;
+    std::map<std::string, std::vector<std::uint32_t>> modules;
+};
+
+Entries read_entries(const std::string &path) {
+    Entries entries;
+    std::ifstream file(path);
+    std::string token;
+    while (file >> token) {
+        if (token[0] == '#') { std::getline(file, token); continue; }
+        const auto colon = token.find(':');
+        if (colon == std::string::npos)
+            entries.main.push_back(static_cast<std::uint32_t>(std::stoul(token, nullptr, 16)));
+        else
+            entries.modules[token.substr(0, colon)].push_back(static_cast<std::uint32_t>(std::stoul(token.substr(colon + 1), nullptr, 16)));
+    }
+    return entries;
+}
+
+std::set<std::uint32_t> dynamic_sites(const Links &links) {
+    std::set<std::uint32_t> sites;
+    for (const auto &[at, link] : links)
+        if (link.kind == Fix::Jump && link.external) sites.insert(at);
+    return sites;
+}
+
+std::size_t code_size(const Program &program) {
+    std::size_t code = 0;
+    for (std::uint32_t pc = program.base; pc < program.end; pc += 4) code += program.is_code(pc);
+    return code;
+}
+
+std::uint32_t word_at(const Snr2Module &m, std::uint32_t at) {
+    std::uint32_t value;
+    std::memcpy(&value, m.bytes.data() + at, 4);
+    return value;
+}
+
+std::vector<std::pair<std::uint32_t, std::uint32_t>> checks_for(const Snr2Module &m, const Program &program) {
+    std::vector<std::uint32_t> words;
+    for (std::uint32_t pc = m.code_begin; pc + 4 <= m.code_end; pc += 4)
+        if (program.is_code(pc) && !m.links.count(pc) && word_at(m, pc)) words.push_back(pc);
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> checks{{0, word_at(m, 0)}};
+    for (std::size_t k = 0; k < 8 && !words.empty(); ++k) {
+        const std::uint32_t pc = words[k * words.size() / 8];
+        if (checks.back().first != pc) checks.emplace_back(pc, word_at(m, pc));
+    }
+    return checks;
+}
+
+std::vector<Snr2Module> read_modules(const std::string &dir) {
+    std::vector<std::filesystem::path> paths;
+    for (const auto &entry : std::filesystem::directory_iterator(dir))
+        if (entry.is_regular_file()) paths.push_back(entry.path());
+    std::sort(paths.begin(), paths.end());
+    std::vector<Snr2Module> modules;
+    std::map<std::string, int> names;
+    for (const auto &path : paths) {
+        std::ifstream file(path, std::ios::binary);
+        std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(file), {}};
+        auto module = read_snr2_module(bytes);
+        if (!module) module = read_xff_module(std::move(bytes), path.stem().string());
+        if (!module) continue;
+        if (std::any_of(modules.begin(), modules.end(), [&](const Snr2Module &m) { return m.bytes == module->bytes; })) continue;
+        if (const int n = names[module->name]++) module->name += "_" + std::to_string(n + 1);
+        modules.push_back(std::move(*module));
+    }
+    return modules;
+}
+
+// A code window the game rewrites at runtime is a segment of the executable
+// with no file contents. The pipeline captures what the game unpacks into it
+// as files named <base>_<name>.bin, one content per file, and this reads them
+// all as images of the one window, each a module to translate for that base.
+constexpr std::uint32_t kOverlayMagic = 0x336F574Du;
+constexpr std::uint32_t kOverlayHeader = 0x40u;
+
+Image window_image(const Snr2Module &o) {
+    if (o.code_begin || o.code_end != o.size) return Image::split(o.base, o.bytes, o.code_begin, o.code_end);
+    return Image::raw(o.base, o.bytes, {o.base, o.base + o.size});
+}
+
+std::vector<Snr2Module> read_overlays(const std::string &dir) {
+    std::vector<Snr2Module> overlays;
+    for (const auto &path : std::filesystem::directory_iterator(dir)) {
+        if (!path.is_regular_file() || path.path().extension() != ".bin") continue;
+        const std::string stem = path.path().stem().string();
+        const auto split = stem.find('_');
+        if (split == std::string::npos) continue;
+        const std::string base = stem.substr(0, split);
+        if (base.empty() || base.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) continue;
+        Snr2Module o;
+        std::ifstream file(path.path(), std::ios::binary);
+        o.bytes = std::vector<std::uint8_t>{std::istreambuf_iterator<char>(file), {}};
+        if (o.bytes.size() < 0x400u || o.bytes.size() & 3u) continue;
+        o.size = static_cast<std::uint32_t>(o.bytes.size());
+        o.base = static_cast<std::uint32_t>(std::stoul(base, nullptr, 16));
+        o.code_begin = 0;
+        o.code_end = o.size;
+        const auto header = [&](std::uint32_t at) {
+            std::uint32_t value;
+            std::memcpy(&value, o.bytes.data() + at, 4);
+            return value;
+        };
+        if (header(0) == kOverlayMagic && header(8) == o.base && header(12) + kOverlayHeader <= o.size) {
+            o.code_begin = kOverlayHeader;
+            o.code_end = kOverlayHeader + header(12);
+        }
+        o.name = stem;
+        if (std::any_of(overlays.begin(), overlays.end(), [&](const Snr2Module &m) { return m.base == o.base && m.bytes == o.bytes; })) continue;
+        overlays.push_back(std::move(o));
+    }
+    std::sort(overlays.begin(), overlays.end(), [](const Snr2Module &a, const Snr2Module &b) { return a.name < b.name; });
+    return overlays;
+}
+
+// Calls the static program makes into the window seed every image of it, so
+// each is translated from those entry points whether or not it has been seen.
+std::vector<std::uint32_t> window_entries(const Image &image, const Program &program, std::uint32_t base, std::uint32_t size) {
+    std::vector<std::uint32_t> seeds;
+    for (std::uint32_t pc = program.base; pc < program.end; pc += 4) {
+        if (!program.is_code(pc)) continue;
+        const Insn i = decode(*image.word(pc), pc);
+        const Flow f = flow(i.op);
+        if (f != Flow::Jump && f != Flow::Call && f != Flow::Branch && f != Flow::BranchLikely) continue;
+        const std::uint32_t t = i.branch_target_of();
+        if (t - base < size) seeds.push_back(t);
+    }
+    return seeds;
+}
+
+// A window image is served only while every word of it the game runs as code
+// is in place, so the checks are all the translated code words: the game
+// writes the window's data freely, and a change any translation covers is a
+// different image and a call into it must pick the other module.
+std::vector<std::pair<std::uint32_t, std::uint32_t>> checks_for_window(const Snr2Module &o, const Program &program) {
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> checks;
+    for (std::uint32_t at = 0; at + 4 <= o.size; at += 4) {
+        if (!program.is_code(o.base + at)) continue;
+        std::uint32_t word = 0;
+        std::memcpy(&word, o.bytes.data() + at, 4);
+        checks.emplace_back(at, word);
+    }
+    return checks;
+}
+
+std::uint32_t template_mask(std::uint32_t w) {
+    const std::uint32_t op = w >> 26;
+    if (op == 2 || op == 3) return w & 0xFC000000u;
+    if (op == 0x0f || op == 0x08 || op == 0x09 || op == 0x0d || op == 0x18 || op == 0x19 || op == 0x1a || op == 0x1b || op == 0x1e || op == 0x1f ||
+        (op >= 0x20 && op <= 0x3f))
+        return w & 0xFFFF0000u;
+    return w;
+}
+
+// Templates (T<n>.bin + T<n>.txt, see the template builder): code a game links
+// to another address in each image of an area, translated once at kTemplateBase.
+struct TemplateFile {
+    std::string name;
+    std::vector<std::uint8_t> bytes;
+    std::set<std::uint32_t> fields, dynamic, internal;
+    std::vector<std::uint32_t> seeds, weak;
+    std::vector<Translation::Piece> pieces;
+    std::pair<std::uint32_t, std::uint32_t> area{UINT32_MAX, 0};
+};
+
+std::vector<TemplateFile> read_templates(const std::string &dir) {
+    std::vector<std::filesystem::path> paths;
+    for (const auto &entry : std::filesystem::directory_iterator(dir))
+        if (entry.path().extension() == ".txt" && entry.path().stem().string().starts_with("T")) paths.push_back(entry.path());
+    std::sort(paths.begin(), paths.end());
+    std::vector<TemplateFile> out;
+    for (const auto &path : paths) {
+        TemplateFile t;
+        t.name = path.stem().string();
+        std::ifstream bin(std::filesystem::path(path).replace_extension(".bin"), std::ios::binary);
+        t.bytes = std::vector<std::uint8_t>{std::istreambuf_iterator<char>(bin), {}};
+        std::ifstream meta(path);
+        std::string kind, image;
+        std::uint32_t size = 0;
+        while (meta >> kind) {
+            auto num = [&] { std::string s; meta >> s; return static_cast<std::uint32_t>(std::stoul(s, nullptr, 16)); };
+            if (kind == "size") size = num();
+            else if (kind == "piece") {
+                const std::uint32_t at = num(), words = num();
+                std::string h;
+                meta >> h;
+                t.pieces.push_back({kTemplateBase + at, words, std::stoull(h, nullptr, 16)});
+            } else if (kind == "field") t.fields.insert(kTemplateBase + num());
+            else if (kind == "dyn") t.dynamic.insert(kTemplateBase + num());
+            else if (kind == "int") t.internal.insert(kTemplateBase + num());
+            else if (kind == "seed") t.seeds.push_back(kTemplateBase + num());
+            else if (kind == "weak") t.weak.push_back(kTemplateBase + num());
+            else if (kind == "at") {
+                meta >> image;
+                const std::uint32_t at = num();
+                t.area = {std::min(t.area.first, at), std::max(t.area.second, at + size)};
+            } else std::getline(meta, kind);
+        }
+        if (t.bytes.size() != size || size < 8) continue;
+        out.push_back(std::move(t));
+    }
+    return out;
+}
+
+int usage() {
+    std::fprintf(stderr, "usage: eerecomp <elf> [--entries file] [--modules dir] [--overlays dir] [--templates dir] [--probes file] [--out dir] [--stats]\n");
+    return 2;
+}
+
+}
+
+int main(int argc, char **argv) {
+    if (argc < 2) return usage();
+    std::string elf_path = argv[1], entries_path, out, probes_path, modules_dir, overlays_dir, templates_dir;
+    bool stats = false;
+    for (int i = 2; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--entries" && i + 1 < argc) entries_path = argv[++i];
+        else if (arg == "--stats") stats = true;
+        else if (arg == "--out" && i + 1 < argc) out = argv[++i];
+        else if (arg == "--probes" && i + 1 < argc) probes_path = argv[++i];
+        else if (arg == "--modules" && i + 1 < argc) modules_dir = argv[++i];
+        else if (arg == "--overlays" && i + 1 < argc) overlays_dir = argv[++i];
+        else if (arg == "--templates" && i + 1 < argc) templates_dir = argv[++i];
+        else return usage();
+    }
+
+    try {
+        const Image image = Image::load(elf_path);
+        Entries entries = entries_path.empty() ? Entries{} : read_entries(entries_path);
+        const std::vector<Snr2Module> modules = modules_dir.empty() ? std::vector<Snr2Module>{} : read_modules(modules_dir);
+        for (const Snr2Module &m : modules)
+            for (const std::uint32_t seed : m.host_seeds)
+                if (image.executable(seed)) entries.main.push_back(seed);
+        const Links imports = snr2_imports(image);
+        Program program = analyse(image, entries.main, dynamic_sites(imports));
+        std::map<Op, std::size_t> histogram;
+        for (std::uint32_t pc = program.base; pc < program.end; pc += 4)
+            if (program.is_code(pc)) ++histogram[decode(*image.word(pc), pc).op];
+        const std::size_t code = code_size(program);
+        std::printf("code %zu instructions (%zu KiB), functions %zu, entries %zu, rejected seeds %zu\n",
+                    code, code * 4 / 1024, program.functions.size(), program.entries.size(), program.rejected.size());
+        if (stats)
+            for (const auto &[op, count] : histogram) std::printf("%10zu %s\n", count, name(op));
+
+        std::vector<Translation> translations{{&image, &program, imports.empty() ? nullptr : &imports, "", false, "", 0, {}}};
+        std::deque<Image> images;
+        std::deque<Program> programs;
+        std::size_t module_code = 0;
+        for (const Snr2Module &m : modules) {
+            images.push_back(snr2_image(m));
+            std::vector<std::uint32_t> seeds = m.seeds;
+            if (const auto it = entries.modules.find(m.name); it != entries.modules.end()) seeds.insert(seeds.end(), it->second.begin(), it->second.end());
+            programs.push_back(analyse(images.back(), seeds, dynamic_sites(m.links)));
+            module_code += code_size(programs.back());
+            translations.push_back({&images.back(), &programs.back(), &m.links, "m_" + m.name + "_", true, m.name, m.size, checks_for(m, programs.back())});
+        }
+        if (!modules.empty())
+            std::printf("%zu modules, code %zu instructions (%zu KiB), %zu sites in the program linked at run time\n", modules.size(), module_code,
+                        module_code * 4 / 1024, imports.size());
+        const std::vector<Snr2Module> overlays =
+            overlays_dir.empty() || !std::filesystem::exists(overlays_dir) ? std::vector<Snr2Module>{} : read_overlays(overlays_dir);
+        // Data in a window lives and dies with the game, so captures of one
+        // image differ in bytes it wrote since. The code identifies the image:
+        // analyse every capture with the same seeds, group the ones answering
+        // to one code, and translate one image per group, so a re-captured
+        // image is never served by a translation that has not seen its entry
+        // points.
+        std::size_t overlay_code = 0;
+        std::map<std::uint32_t, std::vector<std::uint32_t>> window_seeds;
+        std::map<std::uint32_t, std::set<std::uint32_t>> window_tokens;
+        std::map<std::string, std::string> variant_of;
+        std::map<std::string, std::set<std::uint32_t>> window_offsets;
+        std::map<std::uint32_t, std::vector<std::pair<std::string, std::vector<std::pair<std::uint32_t, std::uint32_t>>>>> code_signatures;
+        std::set<std::string> representatives;
+        std::set<std::uint32_t> called_out;
+        for (const Snr2Module &o : overlays) {
+            if (!window_seeds.count(o.base)) window_seeds[o.base] = window_entries(image, program, o.base, o.size);
+            if (const auto it = entries.modules.find(o.name); it != entries.modules.end())
+                for (const std::uint32_t entry : it->second) window_tokens[o.base].insert(entry);
+        }
+        std::map<std::uint32_t, std::uint32_t> window_sizes;
+        for (const Snr2Module &o : overlays) window_sizes[o.base] = std::max(window_sizes[o.base], o.size);
+        std::map<std::uint32_t, std::vector<std::uint32_t>> called_between;
+        std::vector<std::uint32_t> called_in_main;
+        for (const Snr2Module &o : overlays) {
+            const Image candidate = window_image(o);
+            std::vector<std::uint32_t> seeds = window_seeds[o.base];
+            for (const std::uint32_t entry : window_tokens[o.base]) seeds.push_back(o.base + entry);
+            const Program reached = analyse(candidate, seeds, {});
+            for (const auto &[base, size] : window_sizes) {
+                if (base == o.base) continue;
+                const std::vector<std::uint32_t> calls = window_entries(candidate, reached, base, size);
+                called_between[base].insert(called_between[base].end(), calls.begin(), calls.end());
+            }
+            const std::vector<std::uint32_t> calls = window_entries(candidate, reached, program.base, program.end - program.base);
+            called_in_main.insert(called_in_main.end(), calls.begin(), calls.end());
+        }
+        if (!called_in_main.empty()) program = analyse(image, entries.main, dynamic_sites(imports), called_in_main);
+        const auto pointers_in = [&](const std::vector<std::uint8_t> &bytes, std::uint32_t own) {
+            for (std::size_t at = 0; at + 4 <= bytes.size(); at += 4) {
+                std::uint32_t word;
+                std::memcpy(&word, bytes.data() + at, 4);
+                if (word & 3u) continue;
+                for (const auto &[base, size] : window_sizes)
+                    if (base != own && word - base < size) called_between[base].push_back(word);
+            }
+        };
+        for (const Snr2Module &o : overlays) pointers_in(o.bytes, o.base);
+        for (const auto &segment : image.segments()) pointers_in(segment.bytes, 0);
+        for (auto &[base, calls] : called_between) {
+            std::sort(calls.begin(), calls.end());
+            calls.erase(std::unique(calls.begin(), calls.end()), calls.end());
+        }
+        for (const Snr2Module &o : overlays) {
+            Image candidate = window_image(o);
+            std::vector<std::uint32_t> seeds = window_seeds[o.base];
+            for (const std::uint32_t entry : window_tokens[o.base]) seeds.push_back(o.base + entry);
+            const Program signature_program = analyse(candidate, seeds, {}, called_between[o.base]);
+            std::vector<std::pair<std::uint32_t, std::uint32_t>> signature;
+            for (std::uint32_t at = 0; at + 4 <= o.size; at += 4)
+                if (signature_program.is_code(o.base + at)) {
+                    std::uint32_t word = 0;
+                    std::memcpy(&word, o.bytes.data() + at, 4);
+                    signature.emplace_back(at, word);
+                }
+            bool found = false;
+            for (const auto &[name, sig] : code_signatures[o.base])
+                if (sig == signature) { found = true; variant_of[o.name] = name; break; }
+            if (!found) {
+                code_signatures[o.base].push_back({o.name, signature});
+                variant_of[o.name] = o.name;
+                representatives.insert(o.name);
+            }
+            if (const auto it = entries.modules.find(o.name); it != entries.modules.end())
+                for (const std::uint32_t entry : it->second) window_offsets[variant_of[o.name]].insert(entry);
+        }
+        for (const Snr2Module &o : overlays) {
+            if (!representatives.count(o.name)) continue;
+            images.push_back(window_image(o));
+            std::vector<std::uint32_t> seeds = window_seeds[o.base];
+            // Entry tokens name module positions, and unlike a relocatable
+            // module this image occupies a real address.
+            for (const std::uint32_t entry : window_offsets[o.name]) seeds.push_back(o.base + entry);
+            programs.push_back(analyse(images.back(), seeds, {}, called_between[o.base]));
+            overlay_code += code_size(programs.back());
+            translations.push_back({&images.back(), &programs.back(), nullptr, "m_" + o.name + "_", false, o.name, o.size,
+                                    checks_for_window(o, programs.back()), true, o.base});
+            for (std::uint32_t pc = o.base; pc < o.base + o.size; pc += 4) {
+                if (!programs.back().is_code(pc)) continue;
+                const Insn i = decode(*images.back().word(pc), pc);
+                const Flow f = flow(i.op);
+                const std::uint32_t t = i.jump_target();
+                if ((f == Flow::Jump || f == Flow::Call) && t >= program.base && t < program.end && !program.entries.count(t)) called_out.insert(t);
+            }
+        }
+        if (!overlays.empty()) {
+            std::size_t called_entries = 0;
+            for (const auto &[base, seeds] : window_seeds) called_entries += seeds.size();
+            std::printf("%zu distinct code window images of %zu captured, code %zu instructions (%zu KiB), %zu entry points called from the program\n",
+                        std::count_if(overlays.begin(), overlays.end(), [&](const Snr2Module &o) { return representatives.count(o.name) != 0; }),
+                        overlays.size(), overlay_code, overlay_code * 4 / 1024, called_entries);
+        }
+
+        std::vector<TemplateFile> templates = templates_dir.empty() ? std::vector<TemplateFile>{} : read_templates(templates_dir);
+        std::deque<Links> template_links;
+        std::size_t template_code = 0;
+        for (TemplateFile &t : templates) {
+            const std::uint32_t size = static_cast<std::uint32_t>(t.bytes.size());
+            images.push_back(Image::raw(kTemplateBase, t.bytes, {kTemplateBase, kTemplateBase + size}));
+            Links &links = template_links.emplace_back();
+            for (const std::uint32_t at : t.fields)
+                links[at] = {(*images.back().word(at) >> 26) == 0x0f ? Fix::High : Fix::Low, true, 0};
+            for (const std::uint32_t at : t.dynamic) links[at] = {Fix::Jump, true, 0};
+            std::vector<std::uint32_t> seeds = t.seeds;
+            if (const auto it = entries.modules.find(t.name); it != entries.modules.end()) seeds.insert(seeds.end(), it->second.begin(), it->second.end());
+            programs.push_back(analyse(images.back(), seeds, dynamic_sites(links), t.weak, true));
+            const Program &p = programs.back();
+            const std::size_t code = code_size(p);
+            if (!code) continue;
+            template_code += code;
+            std::vector<std::pair<std::uint32_t, std::uint32_t>> checks;
+            for (std::uint32_t pc = p.base; pc < p.end; pc += 4) {
+                if (!p.is_code(pc)) continue;
+                const std::uint32_t word = *images.back().word(pc);
+                if (t.fields.count(pc) || t.dynamic.count(pc) || t.internal.count(pc)) checks.emplace_back(pc | 1u, template_mask(word));
+                else checks.emplace_back(pc, word);
+            }
+            Translation tr{&images.back(), &programs.back(), &links, "m_" + t.name + "_", true, t.name, size, std::move(checks)};
+            tr.template_module = true;
+            tr.pieces = t.pieces;
+            tr.area = t.area;
+            translations.push_back(std::move(tr));
+            for (std::uint32_t pc = p.base; pc < p.end; pc += 4) {
+                if (!p.is_code(pc) || t.dynamic.count(pc)) continue;
+                const Insn i = decode(*images.back().word(pc), pc);
+                const Flow f = flow(i.op);
+                const std::uint32_t target = i.jump_target();
+                if ((f == Flow::Jump || f == Flow::Call) && target >= program.base && target < program.end && !program.entries.count(target)) called_out.insert(target);
+            }
+        }
+        if (!templates.empty())
+            std::printf("%zu templates, %zu with code, code %zu instructions (%zu KiB)\n", templates.size(),
+                        static_cast<std::size_t>(std::count_if(translations.begin(), translations.end(), [](const Translation &t) { return t.template_module; })),
+                        template_code, template_code * 4 / 1024);
+        // Window and template code jumps into the program at places the program
+        // may reach only through pointers, if at all: entry points of it all the same.
+        if (!called_out.empty()) {
+            std::vector<std::uint32_t> seeds = entries.main;
+            seeds.insert(seeds.end(), called_out.begin(), called_out.end());
+            program = analyse(image, seeds, dynamic_sites(imports), called_in_main);
+            std::printf("%zu entry points of the program called from code windows and templates\n", called_out.size());
+        }
+
+        if (!out.empty()) {
+            CodegenOptions options;
+            options.output = out;
+            if (!probes_path.empty())
+                for (std::uint32_t a : read_entries(probes_path).main) options.probes.insert(a);
+            generate(translations, options);
+        }
+    } catch (const std::exception &error) {
+        std::fprintf(stderr, "eerecomp: %s\n", error.what());
+        return 1;
+    }
+    return 0;
+}
