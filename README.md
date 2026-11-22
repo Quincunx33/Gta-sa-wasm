@@ -13,7 +13,7 @@
 </p>
 
 > [!WARNING]
-> **Experimental — gameplay is not yet verified as playable.** The current iOS Safari capture shows the startup screen and touch controls, not working gameplay. A cloud desktop Chrome run rendered an intro/credits frame, but a later run encountered runtime errors. This repository is a work in progress, not a stable game release.
+> **Experimental — gameplay is not yet verified as playable.** The iOS Safari capture shows the startup screen and touch controls, not working gameplay. The desktop Chrome captures show an intro/credits frame and a later runtime-error state. This is a work in progress, not a stable game release.
 
 ## What is this?
 
@@ -72,24 +72,30 @@ python3 scripts/serve.py build/web-gtasa-safari games/gtasa/disc.iso --game game
 
 The Safari compatibility build may be less efficient than the standard browser build. Check the repository scripts and source documentation for required dependencies and additional build options.
 
-## Screenshots & current status
+## Screenshots & test status
 
-These captures document the current state of the experiment. They are diagnostic evidence, not proof of stable gameplay.
+Screenshots are separated by the platform they were captured on. **The iOS image is shown first; the desktop Chrome test captures are listed separately below.** These are test snapshots, not proof of stable gameplay.
 
-| iOS Safari 26 | Cloud desktop Chrome |
-|:--:|:--:|
-| Startup screen and touch controls | Intro / credits frame |
+### iOS — Safari 26
 
 <p align="center">
-  <img src="docs/screenshots/ios-safari-touch-controls.webp" alt="GTA San Andreas startup screen and touch controls in iOS Safari; gameplay is not playable yet" width="720" />
+  <img src="docs/screenshots/ios-safari-touch-controls.webp" alt="iOS Safari 26: GTA San Andreas startup screen with on-screen touch controls" width="720" />
+  <br />
+  <sub>iPhone/iPad Safari 26 · Startup screen and touch controls · Gameplay not yet verified</sub>
+</p>
+
+### Desktop — Cloud Chrome
+
+<p align="center">
+  <img src="docs/screenshots/gtasa-intro-credits-cloud-chrome.webp" alt="Desktop cloud Chrome: GTA San Andreas intro and credits frame" width="720" />
+  <br />
+  <sub>Desktop cloud Chrome · Intro / credits frame rendered</sub>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/gtasa-intro-credits-cloud-chrome.webp" alt="GTA San Andreas intro and credits rendered in cloud Chrome" width="720" />
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/gtasa-runtime-diagnostics-cloud-chrome.webp" alt="Runtime diagnostics from a later GTA San Andreas cloud Chrome run" width="720" />
+  <img src="docs/screenshots/gtasa-runtime-diagnostics-cloud-chrome.webp" alt="Desktop cloud Chrome: runtime diagnostics from a later test run" width="720" />
+  <br />
+  <sub>Desktop cloud Chrome · Runtime diagnostics from a later run</sub>
 </p>
 
 ## Controls
