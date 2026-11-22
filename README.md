@@ -1,58 +1,123 @@
-# GTA SA WASM
+# GTA San Andreas — WebAssembly
 
-An experimental WebAssembly build of the PlayStation 2 version of Grand Theft Auto: San Andreas, built with the PS2 Web Recomp project.
+<p align="center">
+  <strong>An experimental browser-based port of the PS2 version of Grand Theft Auto: San Andreas.</strong>
+  <br />
+  Built with the <a href="https://github.com/ps2web/ps2web">PS2 Web Recomp</a> project and adapted for iOS Safari 26.
+</p>
 
-> **Experimental — not playable on iOS Safari yet:** The iOS Safari screenshot below shows the startup screen and touch controls only; it does not show playable gameplay. This is a diagnostic build, not a verified stable release. A cloud desktop Chrome run rendered an intro/credits frame, but a longer run encountered runtime errors.
+<p align="center">
+  <a href="https://github.com/Quincunx33/Gta-sa-wasm/releases/tag/ios26-safari-latest6">Latest Safari build</a>
+  ·
+  <a href="https://github.com/Quincunx33/Gta-sa-wasm/issues">Report an issue</a>
+</p>
+
+> [!WARNING]
+> **Experimental — gameplay is not yet verified as playable.** The current iOS Safari capture shows the startup screen and touch controls, not working gameplay. A cloud desktop Chrome run rendered an intro/credits frame, but a later run encountered runtime errors. This repository is a work in progress, not a stable game release.
+
+## What is this?
+
+This project explores running the PlayStation 2 version of **Grand Theft Auto: San Andreas** in a modern web browser through WebAssembly.
+
+The current work focuses on an iOS Safari 26-compatible build, browser input support, and loading a user-provided game image at runtime.
 
 ## Download
 
-Download the prebuilt Safari 26 archive from the [GTA SA WASM release](https://github.com/Quincunx33/Gta-sa-wasm/releases/tag/ios26-safari-latest6):
+Get the prebuilt archive from the [latest iOS Safari release](https://github.com/Quincunx33/Gta-sa-wasm/releases/tag/ios26-safari-latest6).
 
-- `GTASA-iOS26-Safari-latest6.zip`
+**Archive:** `GTASA-iOS26-Safari-latest6.zip`
 
-The archive contains the compiled web files (`ps2web.html`, `ps2web.js`, `ps2web.wasm`, and `ps2web.data`). **It does not include the game disc image.**
+The archive contains the compiled web application:
 
-## Run the prebuilt build
+- `ps2web.html` — browser entry point
+- `ps2web.js` — JavaScript runtime
+- `ps2web.wasm` — WebAssembly module
+- `ps2web.data` — packaged application data
 
-1. Extract the ZIP into a directory served by a local or remote web server.
-2. Supply your own legally obtained PS2 game image as `disc.iso`, beside `ps2web.html` (the page requests it from `/disc.iso`).
-3. Serve the page from the same origin as the ISO. The server must support HTTP byte-range requests and return these headers:
+The game disc image is **not included**. You must provide your own legally obtained PS2 ISO.
 
-   ```http
-   Cross-Origin-Opener-Policy: same-origin
-   Cross-Origin-Embedder-Policy: require-corp
-   ```
+## Run the build
 
-The page streams the disc image; do not put the ISO in this repository or in the release archive. A static file server that lacks the required headers or byte-range support will not work correctly.
+1. Download and extract the release ZIP.
+2. Place your legally obtained game image beside `ps2web.html`, named `disc.iso`.
+3. Serve the directory over HTTP or HTTPS from a server configured for cross-origin isolation and byte-range requests.
+4. Open the page in a supported browser.
+
+The ISO is requested from `/disc.iso` and streamed by the page. Keep it on the same origin as the web application.
+
+### Required server configuration
+
+Your server must support HTTP byte-range requests and send these response headers:
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+A basic static server without these headers or byte-range support may fail to initialize the build correctly.
 
 ## Build from source
 
-A PS2 ISO is required to generate a game-specific build. Keep it local and out of Git. From the repository root, place your own image at `games/gtasa/disc.iso`, then run:
+A PS2 game image is required for the game-specific porting and build steps. Keep the ISO local; **do not commit it or upload it to GitHub**.
+
+Place your own image at `games/gtasa/disc.iso`, then run from the repository root:
 
 ```bash
 scripts/port.sh gtasa games/gtasa/disc.iso
+
 PS2_WEB_SAFARI26=ON scripts/build_web.sh gtasa
+
 python3 scripts/serve.py build/web-gtasa-safari games/gtasa/disc.iso --game games/gtasa
 ```
 
-The Safari compatibility build is less efficient than the standard browser build. See the scripts and source documentation for build dependencies and additional options.
+The Safari compatibility build may be less efficient than the standard browser build. Check the repository scripts and source documentation for required dependencies and additional build options.
 
-## Screenshots
+## Screenshots & current status
 
-The first image is from iOS Safari and shows the startup screen with touch controls—not playable gameplay. The other captures are from cloud desktop Chrome: the intro image shows a rendered frame, and the diagnostics image records errors encountered during a later run. None demonstrates a stable, playable game.
+These captures document the current state of the experiment. They are diagnostic evidence, not proof of stable gameplay.
 
-![GTA SA startup screen and touch controls in iOS Safari; gameplay is not playable yet](docs/screenshots/ios-safari-touch-controls.webp)
+| iOS Safari 26 | Cloud desktop Chrome |
+|:--:|:--:|
+| Startup screen and touch controls | Intro / credits frame |
 
-![GTA San Andreas intro and credits rendered in cloud Chrome](docs/screenshots/gtasa-intro-credits-cloud-chrome.webp)
+<p align="center">
+  <img src="docs/screenshots/ios-safari-touch-controls.webp" alt="GTA San Andreas startup screen and touch controls in iOS Safari; gameplay is not playable yet" width="720" />
+</p>
 
-![Runtime diagnostics from a later GTA San Andreas cloud Chrome run](docs/screenshots/gtasa-runtime-diagnostics-cloud-chrome.webp)
+<p align="center">
+  <img src="docs/screenshots/gtasa-intro-credits-cloud-chrome.webp" alt="GTA San Andreas intro and credits rendered in cloud Chrome" width="720" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/gtasa-runtime-diagnostics-cloud-chrome.webp" alt="Runtime diagnostics from a later GTA San Andreas cloud Chrome run" width="720" />
+</p>
 
 ## Controls
 
-The page supports touch controls and browser gamepads. Keyboard mapping: **Z** = Cross, **X** = Circle, **A** = Square, **S** = Triangle, **Q/W/1/2** = shoulder buttons, **Enter** = Start, **Backspace** = Select, **arrow keys** = D-pad, and **I/J/K/L** = left stick. Press **F** for fullscreen.
+The browser page supports touch controls and gamepads.
 
-## Legal and licensing
+| Keyboard | PS2 button |
+|:--|:--|
+| `Z` | Cross |
+| `X` | Circle |
+| `A` | Square |
+| `S` | Triangle |
+| `Q` / `W` / `1` / `2` | Shoulder buttons |
+| `Enter` | Start |
+| `Backspace` | Select |
+| Arrow keys | D-pad |
+| `I` / `J` / `K` / `L` | Left stick |
+| `F` | Fullscreen |
 
-This repository contains project source code and build tooling; it does not include the game ISO. Use only game images you are legally entitled to use. Grand Theft Auto and related marks are the property of their respective owners; this project is unofficial and is not affiliated with or endorsed by Rockstar Games or Sony Interactive Entertainment.
+## Important notes
 
-The repository code is licensed under the [MIT License](LICENSE). Third-party components retain their respective licenses and notices.
+- This is an unofficial technical experiment; compatibility and performance are still being investigated.
+- The repository and release do not provide the commercial game or its disc image.
+- Do not upload, distribute, or commit copyrighted game files.
+- Use only game images you are legally entitled to use.
+
+## Legal
+
+Grand Theft Auto, Grand Theft Auto: San Andreas, and related names and marks belong to their respective owners. This project is unofficial and is not affiliated with, endorsed by, or sponsored by Rockstar Games or Sony Interactive Entertainment.
+
+The repository's original code is licensed under the [MIT License](LICENSE). Third-party components remain subject to their own licenses and notices.
