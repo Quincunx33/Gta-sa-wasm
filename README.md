@@ -13,13 +13,13 @@
 </p>
 
 > [!WARNING]
-> **Experimental — gameplay is not yet verified as playable.** The iOS Safari capture shows the startup screen and touch controls, not working gameplay. The desktop Chrome captures show an intro/credits frame and a later runtime-error state. This is a work in progress, not a stable game release.
+> **Platform status:** Gameplay has been confirmed working on desktop and Android. iOS Safari 26 remains experimental; the current iOS capture shows the startup screen and touch controls, but gameplay has not yet been verified there. Compatibility may vary by browser and device.
 
 ## What is this?
 
 This project explores running the PlayStation 2 version of **Grand Theft Auto: San Andreas** in a modern web browser through WebAssembly.
 
-The current work focuses on an iOS Safari 26-compatible build, browser input support, and loading a user-provided game image at runtime.
+Desktop and Android gameplay are working. The project also includes an experimental iOS Safari 26 build, with browser input support and runtime loading of a user-provided game image.
 
 ## Download a prebuilt version
 
@@ -171,9 +171,15 @@ Cross-Origin-Embedder-Policy: require-corp
 
 Without byte-range support and cross-origin isolation, the build may fail to initialize.
 
-## Screenshots & test status
+## Platform support & screenshots
 
-Screenshots are separated by the platform they were captured on. These are test snapshots, not proof of stable gameplay.
+| Platform | Status |
+|:--|:--|
+| Desktop browsers | Gameplay working |
+| Android browsers | Gameplay working |
+| iOS Safari 26 | Experimental; gameplay not yet verified |
+
+Screenshots below are grouped by the platform they were captured on.
 
 ### iOS — Safari 26
 
@@ -183,7 +189,7 @@ Screenshots are separated by the platform they were captured on. These are test 
   <sub>iPhone/iPad Safari 26 · Startup screen and touch controls · Gameplay not yet verified</sub>
 </p>
 
-### Desktop — Cloud Chrome
+### Desktop — Chrome (cloud test capture)
 
 <p align="center">
   <img src="docs/screenshots/gtasa-intro-credits-cloud-chrome.webp" alt="Desktop cloud Chrome: GTA San Andreas intro and credits frame" width="720" />
