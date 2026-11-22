@@ -77,7 +77,14 @@ PS2_WEB_SAFARI26=ON scripts/build_web.sh gtasa
 python3 scripts/serve.py build/web-gtasa-safari games/gtasa/disc.iso --game games/gtasa
 ```
 
-The port step writes the translated game files under `games/gtasa/` and `generated/gtasa/`. The regular web build goes to `build/web-gtasa/`; the Safari 26 compatibility build goes to `build/web-gtasa-safari/`. The ISO is not copied into either web build: `serve.py` streams it as `/disc.iso` using HTTP byte ranges. If you deploy the HTML/JS/Wasm build on another server, keep the ISO outside the ZIP/repository and configure that server to provide the disc at `/disc.iso`, with byte-range support and the COOP/COEP headers described below.
+
+#### GTA SA screenshots
+
+These are captures from the cloud Chrome preview, not from an iPhone or iPad running Safari. The intro/credits image shows the game rendering at about frame 1,854; it does not demonstrate stable or playable gameplay. The second capture shows runtime diagnostics from a later run, including unmapped EE reads and break messages.
+
+![GTA San Andreas intro and credits visible in the cloud Chrome preview](docs/screenshots/gtasa-intro-credits-cloud-chrome.webp)
+
+![Cloud Chrome runtime diagnostics from a later GTA SA run](docs/screenshots/gtasa-runtime-diagnostics-cloud-chrome.webp)
 
 Playing finds what those runs missed. Code the translation lacks runs in an interpreter instead of stopping the game, and vector unit programs the build lacks are compiled on the fly in the page and interpreted natively. Both are written down for the next build: `serve.py build/web-mygame games/mygame/disc.iso --game games/mygame` keeps what the page meets, the native runner does the same on its own when it is started with `--window`, and `port.sh mygame "My Game.iso" --no-explore` then translates them.
 
