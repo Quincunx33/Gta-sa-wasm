@@ -15,6 +15,39 @@
 > [!WARNING]
 > **Platform status:** Gameplay has been confirmed working on desktop and Android. iOS Safari 26 remains experimental; the current iOS capture shows the startup screen and touch controls, but gameplay has not yet been verified there. Compatibility may vary by browser and device.
 
+## Platform support & screenshots
+
+| Platform | Status |
+|:--|:--|
+| Desktop browsers | Gameplay working |
+| Android browsers | Gameplay working |
+| iOS Safari 26 | Experimental; gameplay not yet verified |
+
+Screenshots below are grouped by the platform they were captured on.
+
+### iOS — Safari 26
+
+<p align="center">
+  <img src="docs/screenshots/ios-safari-touch-controls.webp" alt="iOS Safari 26: GTA San Andreas startup screen with on-screen touch controls" width="720" />
+  <br />
+  <sub>iPhone/iPad Safari 26 · Startup screen and touch controls · Gameplay not yet verified</sub>
+</p>
+
+### Desktop — Chrome (cloud test capture)
+
+<p align="center">
+  <img src="docs/screenshots/gtasa-intro-credits-cloud-chrome.webp" alt="Desktop cloud Chrome: GTA San Andreas intro and credits frame" width="720" />
+  <br />
+  <sub>Desktop cloud Chrome · Intro / credits frame rendered</sub>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/gtasa-runtime-diagnostics-cloud-chrome.webp" alt="Desktop cloud Chrome: runtime diagnostics from a later test run" width="720" />
+  <br />
+  <sub>Desktop cloud Chrome · Runtime diagnostics from a later run</sub>
+</p>
+
+
 ## What is this?
 
 This project explores running the PlayStation 2 version of **Grand Theft Auto: San Andreas** in a modern web browser through WebAssembly.
@@ -171,37 +204,6 @@ Cross-Origin-Embedder-Policy: require-corp
 
 Without byte-range support and cross-origin isolation, the build may fail to initialize.
 
-## Platform support & screenshots
-
-| Platform | Status |
-|:--|:--|
-| Desktop browsers | Gameplay working |
-| Android browsers | Gameplay working |
-| iOS Safari 26 | Experimental; gameplay not yet verified |
-
-Screenshots below are grouped by the platform they were captured on.
-
-### iOS — Safari 26
-
-<p align="center">
-  <img src="docs/screenshots/ios-safari-touch-controls.webp" alt="iOS Safari 26: GTA San Andreas startup screen with on-screen touch controls" width="720" />
-  <br />
-  <sub>iPhone/iPad Safari 26 · Startup screen and touch controls · Gameplay not yet verified</sub>
-</p>
-
-### Desktop — Chrome (cloud test capture)
-
-<p align="center">
-  <img src="docs/screenshots/gtasa-intro-credits-cloud-chrome.webp" alt="Desktop cloud Chrome: GTA San Andreas intro and credits frame" width="720" />
-  <br />
-  <sub>Desktop cloud Chrome · Intro / credits frame rendered</sub>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/gtasa-runtime-diagnostics-cloud-chrome.webp" alt="Desktop cloud Chrome: runtime diagnostics from a later test run" width="720" />
-  <br />
-  <sub>Desktop cloud Chrome · Runtime diagnostics from a later run</sub>
-</p>
 
 ## Controls
 
