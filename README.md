@@ -2,7 +2,7 @@
 
 An experimental WebAssembly build of the PlayStation 2 version of Grand Theft Auto: San Andreas, built with the PS2 Web Recomp project.
 
-> **Experimental:** This is a diagnostic compatibility build, not a verified stable or playable release. Testing in a cloud desktop browser rendered an intro/credits frame, but a longer run encountered runtime errors. It has **not** been validated on a real iPhone or iPad running Safari 26.
+> **Experimental — not playable on iOS Safari yet:** The iOS Safari screenshot below shows the startup screen and touch controls only; it does not show playable gameplay. This is a diagnostic build, not a verified stable release. A cloud desktop Chrome run rendered an intro/credits frame, but a longer run encountered runtime errors.
 
 ## Download
 
@@ -39,7 +39,9 @@ The Safari compatibility build is less efficient than the standard browser build
 
 ## Screenshots
 
-These captures are from a cloud desktop running Chrome, not from a real iPhone or iPad. The intro image shows a rendered frame; it does not demonstrate stable or playable gameplay. The diagnostics image records errors encountered during a later run.
+The first image is from iOS Safari and shows the startup screen with touch controls—not playable gameplay. The other captures are from cloud desktop Chrome: the intro image shows a rendered frame, and the diagnostics image records errors encountered during a later run. None demonstrates a stable, playable game.
+
+![GTA SA startup screen and touch controls in iOS Safari; gameplay is not playable yet](docs/screenshots/ios-safari-touch-controls.webp)
 
 ![GTA San Andreas intro and credits rendered in cloud Chrome](docs/screenshots/gtasa-intro-credits-cloud-chrome.webp)
 
