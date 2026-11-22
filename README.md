@@ -65,6 +65,20 @@ python3 scripts/serve.py build/web-mygame games/mygame/disc.iso    # http://loca
 
 The exploring runs press start and then cross every five seconds, which gets most games through their title screens, and put an empty memory card in slot 1 the way the page does, so they follow the path a player takes. `--press 900:cross` replaces that with your own inputs and `--frames` sets how long each run lasts. Frames from the last run land in `games/mygame/shots`, which is the quickest way to see how far a new game gets. `scripts/build_web.sh mygame` rebuilds only the page.
 
+### Example: GTA San Andreas
+
+For this port, put your own PS2 GTA San Andreas ISO at `games/gtasa/disc.iso` from the repository root. Keep the ISO local; do not add it to GitHub or the build ZIP. Alternatively, pass the ISO's current path as the second argument to `scripts/port.sh`; the script links a plain ISO into `games/gtasa/disc.iso` and converts supported BIN/CUE or archive inputs there.
+
+```bash
+mkdir -p games/gtasa
+cp "/path/to/your/GTA San Andreas.iso" games/gtasa/disc.iso
+scripts/port.sh gtasa games/gtasa/disc.iso
+PS2_WEB_SAFARI26=ON scripts/build_web.sh gtasa
+python3 scripts/serve.py build/web-gtasa-safari games/gtasa/disc.iso --game games/gtasa
+```
+
+The port step writes the translated game files under `games/gtasa/` and `generated/gtasa/`. The regular web build goes to `build/web-gtasa/`; the Safari 26 compatibility build goes to `build/web-gtasa-safari/`. The ISO is not copied into either web build: `serve.py` streams it as `/disc.iso` using HTTP byte ranges. If you deploy the HTML/JS/Wasm build on another server, keep the ISO outside the ZIP/repository and configure that server to provide the disc at `/disc.iso`, with byte-range support and the COOP/COEP headers described below.
+
 Playing finds what those runs missed. Code the translation lacks runs in an interpreter instead of stopping the game, and vector unit programs the build lacks are compiled on the fly in the page and interpreted natively. Both are written down for the next build: `serve.py build/web-mygame games/mygame/disc.iso --game games/mygame` keeps what the page meets, the native runner does the same on its own when it is started with `--window`, and `port.sh mygame "My Game.iso" --no-explore` then translates them.
 
 Patch files made for PCSX2 work as well. `port.sh` prints the CRC that PCSX2 puts in a game's patch file name, and `--pnach SCUS-97481_2F123FD8.pnach --pnach-section "Widescreen 16:9"` applies the lines outside any section plus the sections you name, the way ticking them in PCSX2 does. Patches that land in the executable are written into it before it is translated, so patches to code take effect, and every patch is also written into memory at boot or every frame as its line asks.
